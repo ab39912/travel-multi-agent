@@ -1,2 +1,5 @@
 streamlit
 openai
+requests
+anthropic
+google-generativeai
