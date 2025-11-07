@@ -133,7 +133,7 @@ def llm_call(provider, model, prompt, temperature=0.7):
     try:
         if provider == "openai":
             # OpenAI API call
-            api_key = st.secrets["openai"]["api_key"]
+            api_key = st.secrets["OPENAI_API_KEY"]
             client = openai.OpenAI(api_key=api_key)
             
             response = client.chat.completions.create(
@@ -145,7 +145,7 @@ def llm_call(provider, model, prompt, temperature=0.7):
         
         elif provider == "claude":
             # Anthropic Claude API call
-            api_key = st.secrets["anthropic"]["api_key"]
+            api_key = st.secrets["ANTHROPIC_API_KEY"]
             client = anthropic.Anthropic(api_key=api_key)
             
             response = client.messages.create(
@@ -158,7 +158,7 @@ def llm_call(provider, model, prompt, temperature=0.7):
         
         elif provider == "gemini":
             # Google Gemini API call
-            api_key = st.secrets["google"]["api_key"]
+            api_key = st.secrets["GEMINI_API_KEY"]
             genai.configure(api_key=api_key)
             
             model_instance = genai.GenerativeModel(model)
@@ -377,9 +377,9 @@ def main():
         
         # Get API key for weather
         try:
-            weather_api_key = st.secrets["weather"]["api_key"]
+            weather_api_key = st.secrets["api_key"]
         except:
-            st.error("Weather API key not found in secrets. Please add it to your secrets.toml file.")
+            st.error("Weather API key not found in secrets. Please add 'api_key' to your secrets.toml file.")
             return
         
         with st.status("🔄 Planning your trip...", expanded=True) as status:
