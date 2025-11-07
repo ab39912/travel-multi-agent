@@ -15,9 +15,30 @@ def get_weather_data(city, api_key):
     Returns: dict with temperature, feels_like, humidity, description, wind_speed
     """
     try:
+        # Convert city format for OpenWeatherMap API
+        # "Syracuse, NY" -> "Syracuse,US"
+        # "London, England" -> "London,GB"
+        city_mapping = {
+            "Syracuse, NY": "Syracuse,US",
+            "New York, NY": "New York,US",
+            "Miami, FL": "Miami,US",
+            "Los Angeles, CA": "Los Angeles,US",
+            "San Diego, CA": "San Diego,US",
+            "Seattle, WA": "Seattle,US",
+            "Chicago, IL": "Chicago,US",
+            "London, England": "London,GB",
+            "Paris, France": "Paris,FR",
+            "Cancun, Mexico": "Cancun,MX",
+            "Tokyo, Japan": "Tokyo,JP",
+            "Seoul, South Korea": "Seoul,KR"
+        }
+        
+        # Use mapped city name if available, otherwise use original
+        query_city = city_mapping.get(city, city)
+        
         base_url = "https://api.openweathermap.org/data/2.5/weather"
         params = {
-            "q": city,
+            "q": query_city,
             "appid": api_key,
             "units": "metric"  # Get temperature in Celsius
         }
@@ -39,6 +60,7 @@ def get_weather_data(city, api_key):
     
     except requests.exceptions.RequestException as e:
         st.error(f"Error fetching weather data for {city}: {str(e)}")
+        st.info(f"💡 Try using format like: 'Syracuse' or 'New York' or 'London'")
         return None
     except KeyError as e:
         st.error(f"Error parsing weather data for {city}: {str(e)}")
@@ -437,5 +459,5 @@ def main():
         st.info("💡 *Tip:* Screenshot or copy this information for your trip planning!")
 
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
