@@ -67,58 +67,77 @@ def get_weather_data(city, api_key):
         return None
 
 
-def calculate_travel_info(origin, destination):
+def calculate_travel_info(origin, destination, provider, model):
     """
-    Calculate travel information between two cities
+    Calculate travel information between two cities using LLM
     Returns: dict with estimated_distance_km, estimated_drive_time_hours, estimated_flight_time_hours
     """
-    # Pre-populated city pairs with travel information
-    city_pairs = {
-        ("Syracuse, NY", "New York, NY"): {"distance": 400, "drive": 4, "flight": 1},
-        ("New York, NY", "Syracuse, NY"): {"distance": 400, "drive": 4, "flight": 1},
+    prompt = f"""You are a travel distance and time estimation expert. Provide accurate travel information between these two cities:
+
+Origin: {origin}
+Destination: {destination}
+
+Please provide ONLY a JSON response with the following structure (no other text):
+{{
+    "estimated_distance_km": <number>,
+    "estimated_drive_time_hours": <number or null if not driveable>,
+    "estimated_flight_time_hours": <number>,
+    "is_international": <true or false>,
+    "notes": "<any important travel notes>"
+}}
+
+Important:
+- Use realistic distances and times
+- Set drive time to null if cities are on different continents or separated by ocean
+- Flight time should include typical flight duration (not including airport time)
+- Be accurate based on real geography"""
+
+    try:
+        response = llm_call(provider, model, prompt, temperature=0.3)
         
-        ("New York, NY", "Los Angeles, CA"): {"distance": 4500, "drive": 41, "flight": 5.5},
-        ("Los Angeles, CA", "New York, NY"): {"distance": 4500, "drive": 41, "flight": 5.5},
+        if not response:
+            return get_fallback_travel_info()
         
-        ("New York, NY", "Miami, FL"): {"distance": 2100, "drive": 19, "flight": 3},
-        ("Miami, FL", "New York, NY"): {"distance": 2100, "drive": 19, "flight": 3},
+        # Try to extract JSON from response
+        import json
+        import re
         
-        ("Syracuse, NY", "Miami, FL"): {"distance": 1900, "drive": 18, "flight": 3},
-        ("Miami, FL", "Syracuse, NY"): {"distance": 1900, "drive": 18, "flight": 3},
+        # Remove markdown code blocks if present
+        json_match = re.search(r'(?:json)?\s*(\{.*?\})\s*', response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find JSON object directly
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                json_str = response
         
-        ("Miami, FL", "Cancun, Mexico"): {"distance": 900, "drive": None, "flight": 1.5},
-        ("Cancun, Mexico", "Miami, FL"): {"distance": 900, "drive": None, "flight": 1.5},
+        data = json.loads(json_str)
         
-        ("London, England", "Paris, France"): {"distance": 450, "drive": None, "flight": 1.5},
-        ("Paris, France", "London, England"): {"distance": 450, "drive": None, "flight": 1.5},
-        
-        ("Tokyo, Japan", "Seoul, South Korea"): {"distance": 1160, "drive": None, "flight": 2.5},
-        ("Seoul, South Korea", "Tokyo, Japan"): {"distance": 1160, "drive": None, "flight": 2.5},
-        
-        ("San Diego, CA", "Seattle, WA"): {"distance": 1900, "drive": 18, "flight": 2.5},
-        ("Seattle, WA", "San Diego, CA"): {"distance": 1900, "drive": 18, "flight": 2.5},
-        
-        ("Chicago, IL", "Miami, FL"): {"distance": 2100, "drive": 20, "flight": 3},
-        ("Miami, FL", "Chicago, IL"): {"distance": 2100, "drive": 20, "flight": 3},
-    }
+        return {
+            "estimated_distance_km": data.get("estimated_distance_km", 1000),
+            "estimated_drive_time_hours": data.get("estimated_drive_time_hours"),
+            "estimated_flight_time_hours": data.get("estimated_flight_time_hours", 3),
+            "is_international": data.get("is_international", False),
+            "notes": data.get("notes", "")
+        }
     
-    # Check if the city pair exists
-    key = (origin, destination)
-    if key in city_pairs:
-        data = city_pairs[key]
-        return {
-            "estimated_distance_km": data["distance"],
-            "estimated_drive_time_hours": data["drive"],
-            "estimated_flight_time_hours": data["flight"]
-        }
-    else:
-        # Default/fallback values for unknown city pairs
-        st.warning(f"Travel data not found for {origin} → {destination}. Using estimated values.")
-        return {
-            "estimated_distance_km": 1000,
-            "estimated_drive_time_hours": 10,
-            "estimated_flight_time_hours": 2.5
-        }
+    except Exception as e:
+        st.warning(f"Could not parse LLM response for travel info. Using fallback estimates. Error: {str(e)}")
+        return get_fallback_travel_info()
+
+
+def get_fallback_travel_info():
+    """Fallback travel info if LLM fails"""
+    return {
+        "estimated_distance_km": 1000,
+        "estimated_drive_time_hours": 10,
+        "estimated_flight_time_hours": 3,
+        "is_international": False,
+        "notes": "Estimated values (LLM unavailable)"
+    }
 
 
 # ============================================
@@ -235,15 +254,22 @@ def travel_logistics_agent(provider, model, origin, destination, travel_info, de
     distance = travel_info["estimated_distance_km"]
     drive_time = travel_info["estimated_drive_time_hours"]
     flight_time = travel_info["estimated_flight_time_hours"]
+    is_international = travel_info.get("is_international", False)
+    notes = travel_info.get("notes", "")
+    
+    drive_info = f"{drive_time} hours" if drive_time else "Not recommended (overseas/too far)"
+    international_note = "\n- This is an INTERNATIONAL trip - don't forget your passport!" if is_international else ""
     
     prompt = f"""You are a travel logistics expert. Provide practical travel advice for this trip:
 
 Origin: {origin}
 Destination: {destination}
 Distance: {distance} km
-Driving time: {drive_time} hours (if applicable)
+Driving time: {drive_info}
 Flight time: {flight_time} hours
 Departure date: {departure_date}
+{f'Additional notes: {notes}' if notes else ''}
+{international_note}
 
 Please provide:
 1. Recommended mode of transportation (drive vs. fly) with reasoning
@@ -394,7 +420,7 @@ def main():
             
             # Step 2: Calculate travel info
             st.write("🗺 Calculating travel information...")
-            travel_info = calculate_travel_info(origin, destination)
+            travel_info = calculate_travel_info(origin, destination, provider, model)
             
             # Step 3: Run Agent 1 - Weather Comparison
             st.write("🌤 Comparing weather conditions...")
