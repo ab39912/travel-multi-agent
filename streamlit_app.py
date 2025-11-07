@@ -9,38 +9,23 @@ import google.generativeai as genai
 # Lab 5a: Weather & Distance Functions
 # ============================================
 
-def get_weather_data(city, api_key):
+def get_weather_data(city, api_key, departure_date=None, provider=None, model=None):
     """
-    Fetch weather data from OpenWeatherMap API
+    Fetch weather data from OpenWeatherMap API and enhance with LLM predictions
     Returns: dict with temperature, feels_like, humidity, description, wind_speed
     """
     try:
-        # Convert city format for OpenWeatherMap API
-        # "Syracuse, NY" -> "Syracuse,US"
-        # "London, England" -> "London,GB"
-        city_mapping = {
-            "Syracuse, NY": "Syracuse,US",
-            "New York, NY": "New York,US",
-            "Miami, FL": "Miami,US",
-            "Los Angeles, CA": "Los Angeles,US",
-            "San Diego, CA": "San Diego,US",
-            "Seattle, WA": "Seattle,US",
-            "Chicago, IL": "Chicago,US",
-            "London, England": "London,GB",
-            "Paris, France": "Paris,FR",
-            "Cancun, Mexico": "Cancun,MX",
-            "Tokyo, Japan": "Tokyo,JP",
-            "Seoul, South Korea": "Seoul,KR"
-        }
-        
-        # Use mapped city name if available, otherwise use original
-        query_city = city_mapping.get(city, city)
+        # Use LLM to convert city name to proper format for OpenWeatherMap API
+        if provider and model:
+            city_format = convert_city_name_with_llm(city, provider, model)
+        else:
+            city_format = city
         
         base_url = "https://api.openweathermap.org/data/2.5/weather"
         params = {
-            "q": query_city,
+            "q": city_format,
             "appid": api_key,
-            "units": "metric"  # Get temperature in Celsius
+            "units": "metric"
         }
         
         response = requests.get(base_url, params=params)
@@ -48,7 +33,8 @@ def get_weather_data(city, api_key):
         
         data = response.json()
         
-        weather_data = {
+        # Get current weather data
+        current_weather = {
             "temperature": data["main"]["temp"],
             "feels_like": data["main"]["feels_like"],
             "humidity": data["main"]["humidity"],
@@ -56,14 +42,138 @@ def get_weather_data(city, api_key):
             "wind_speed": data["wind"]["speed"]
         }
         
-        return weather_data
+        # If departure date is in the future and LLM is available, get prediction
+        if departure_date and provider and model:
+            from datetime import datetime, date as date_type
+            
+            today = date_type.today()
+            if isinstance(departure_date, str):
+                dep_date = datetime.strptime(departure_date, "%Y-%m-%d").date()
+            else:
+                dep_date = departure_date
+            
+            days_ahead = (dep_date - today).days
+            
+            # Only predict if more than 2 days in the future
+            if days_ahead > 2:
+                predicted_weather = predict_weather_with_llm(city, dep_date, provider, model, current_weather)
+                if predicted_weather:
+                    return predicted_weather
+        
+        return current_weather
     
     except requests.exceptions.RequestException as e:
         st.error(f"Error fetching weather data for {city}: {str(e)}")
-        st.info(f"💡 Try using format like: 'Syracuse' or 'New York' or 'London'")
+        st.info(f"💡 Try using a different city name format or check spelling")
         return None
     except KeyError as e:
         st.error(f"Error parsing weather data for {city}: {str(e)}")
+        return None
+
+
+def convert_city_name_with_llm(city, provider, model):
+    """
+    Use LLM to convert user-friendly city names to OpenWeatherMap API format
+    Example: "Syracuse, NY" -> "Syracuse,US"
+    """
+    try:
+        prompt = f"""Convert this city name to OpenWeatherMap API format.
+
+User input: {city}
+
+OpenWeatherMap API accepts formats like:
+- "CityName,CountryCode" (e.g., "London,GB", "Paris,FR", "Tokyo,JP")
+- Just "CityName" for well-known cities
+- "CityName,StateCode,CountryCode" for US cities (e.g., "Syracuse,NY,US")
+
+Country codes: US (USA), GB (UK), FR (France), JP (Japan), MX (Mexico), KR (South Korea), etc.
+
+Return ONLY the converted city name, nothing else. Examples:
+- "New York, NY" -> "New York,US"
+- "London, England" -> "London,GB"
+- "Paris, France" -> "Paris,FR"
+- "Tokyo" -> "Tokyo,JP"
+
+Converted name:"""
+
+        response = llm_call(provider, model, prompt, temperature=0.1)
+        
+        if response:
+            # Clean up the response
+            converted = response.strip().strip('"').strip("'")
+            return converted
+        else:
+            return city
+            
+    except Exception as e:
+        st.warning(f"Could not convert city name with LLM, using original: {str(e)}")
+        return city
+
+
+def predict_weather_with_llm(city, departure_date, provider, model, current_weather):
+    """
+    Use LLM to predict typical weather for a city on a specific date
+    """
+    try:
+        month_name = departure_date.strftime("%B")
+        day = departure_date.day
+        
+        prompt = f"""You are a meteorological expert. Based on historical climate data, predict typical weather conditions for:
+
+City: {city}
+Date: {month_name} {day}
+
+Current weather baseline (for reference):
+- Temperature: {current_weather['temperature']:.1f}°C
+- Conditions: {current_weather['description']}
+
+Provide a realistic weather prediction for this city on this date based on typical seasonal patterns. Return ONLY a JSON response:
+
+{{
+    "temperature": <typical temp in Celsius>,
+    "feels_like": <typical feels like temp>,
+    "humidity": <typical humidity %>,
+    "description": "<typical weather description>",
+    "wind_speed": <typical wind speed m/s>
+}}
+
+Be realistic based on the city's climate and season. For example:
+- Syracuse in January: cold, often snowy, around -5 to 0°C
+- Miami in January: warm, around 20-24°C
+- London in December: cold, rainy, around 5-8°C"""
+
+        response = llm_call(provider, model, prompt, temperature=0.3)
+        
+        if not response:
+            return None
+        
+        # Parse JSON response
+        import json
+        import re
+        
+        json_match = re.search(r'(?:json)?\s*(\{.*?\})\s*', response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                json_str = response
+        
+        predicted = json.loads(json_str)
+        
+        return {
+            "temperature": predicted.get("temperature", current_weather["temperature"]),
+            "feels_like": predicted.get("feels_like", current_weather["feels_like"]),
+            "humidity": predicted.get("humidity", current_weather["humidity"]),
+            "description": predicted.get("description", current_weather["description"]),
+            "wind_speed": predicted.get("wind_speed", current_weather["wind_speed"]),
+            "is_predicted": True
+        }
+        
+    except Exception as e:
+        st.warning(f"Could not predict weather, using current data: {str(e)}")
         return None
 
 
@@ -211,16 +321,20 @@ def weather_comparison_agent(origin_weather, dest_weather, origin_name, dest_nam
     
     temp_diff = dest_weather["temperature"] - origin_weather["temperature"]
     
+    # Check if weather is predicted or current
+    origin_type = "🔮 Predicted" if origin_weather.get("is_predicted") else "📍 Current"
+    dest_type = "🔮 Predicted" if dest_weather.get("is_predicted") else "📍 Current"
+    
     comparison = f"""
 ## 🌤 Weather Comparison
 
-*{origin_name}:*
+*{origin_name}:* ({origin_type})
 - Temperature: {origin_weather['temperature']:.1f}°C (feels like {origin_weather['feels_like']:.1f}°C)
 - Conditions: {origin_weather['description'].title()}
 - Humidity: {origin_weather['humidity']}%
 - Wind Speed: {origin_weather['wind_speed']} m/s
 
-*{dest_name}:*
+*{dest_name}:* ({dest_type})
 - Temperature: {dest_weather['temperature']:.1f}°C (feels like {dest_weather['feels_like']:.1f}°C)
 - Conditions: {dest_weather['description'].title()}
 - Humidity: {dest_weather['humidity']}%
@@ -354,17 +468,17 @@ def main():
     if provider == "openai":
         model = st.sidebar.selectbox(
             "Select Model",
-            ["gpt-5-nano", "gpt-5-chat-latest"]
+            ["gpt-4o", "gpt-4o-mini"]
         )
     elif provider == "claude":
         model = st.sidebar.selectbox(
             "Select Model",
-            ["claude-sonnet-4-20250514", "claude-sonnet-4-5-20250929"]
+            ["claude-sonnet-4-20250514", "claude-sonnet-4-5-20250929", "claude-opus-4-20250514"]
         )
     else:  # gemini
         model = st.sidebar.selectbox(
             "Select Model",
-            ["gemini-2.5-pro", "gemini-2.5-flash"]
+            ["gemini-1.5-pro", "gemini-1.5-flash"]
         )
     
     st.sidebar.info(f"*Current Selection:*\n\n🔧 Provider: {provider}\n\n🤖 Model: {model}")
@@ -411,8 +525,8 @@ def main():
         with st.status("🔄 Planning your trip...", expanded=True) as status:
             # Step 1: Fetch weather data
             st.write("☁ Fetching weather data...")
-            origin_weather = get_weather_data(origin, weather_api_key)
-            dest_weather = get_weather_data(destination, weather_api_key)
+            origin_weather = get_weather_data(origin, weather_api_key, departure_date, provider, model)
+            dest_weather = get_weather_data(destination, weather_api_key, departure_date, provider, model)
             
             if not origin_weather or not dest_weather:
                 status.update(label="❌ Failed to fetch weather data", state="error")
@@ -485,5 +599,5 @@ def main():
         st.info("💡 *Tip:* Screenshot or copy this information for your trip planning!")
 
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
