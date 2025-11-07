@@ -354,17 +354,17 @@ def main():
     if provider == "openai":
         model = st.sidebar.selectbox(
             "Select Model",
-            ["gpt-4o", "gpt-4o-mini"]
+            ["gpt-5-nano", "gpt-5-chat-latest"]
         )
     elif provider == "claude":
         model = st.sidebar.selectbox(
             "Select Model",
-            ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
+            ["claude-sonnet-4-20250514", "claude-sonnet-4-5-20250929"]
         )
     else:  # gemini
         model = st.sidebar.selectbox(
             "Select Model",
-            ["gemini-1.5-pro", "gemini-1.5-flash"]
+            ["gemini-2.5-pro", "gemini-2.5-flash"]
         )
     
     st.sidebar.info(f"*Current Selection:*\n\n🔧 Provider: {provider}\n\n🤖 Model: {model}")
